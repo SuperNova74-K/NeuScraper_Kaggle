@@ -8,7 +8,6 @@ import gzip
 import json
 import zipfile
 from tqdm import tqdm
-from functools import partial
 from multiprocessing import Pool
 from argparse import ArgumentParser
 from tokenization import TokenizerProcessor
@@ -19,6 +18,7 @@ class FeatureExtractorApplierProcessor:
         self.comment = 'This is the constant comment for all rows returned'
         self.chunk_size = 384
         self.max_token_length = 50
+        self.tokenizer = TokenizerProcessor(self.max_token_length)  
 
 
     def _get_html_from_warc(self, cw22id, cw22root_path):
@@ -100,85 +100,97 @@ class FeatureExtractorApplierProcessor:
             start += self.chunk_size
         
         return chunks
-    
-   
-    def Apply(self, data, html_string):
 
-            # Load AnnotateHtmlApi
-            annotate_html = AnnotateHtml()
-            annotate_html.ParseFromString(data)
 
-            api = AnnotateHtmlApi(annotate_html, html_string=html_string)
-
-            # Load tokenizer and global features
-            tokenizer = TokenizerProcessor(self.max_token_length)            
-
-            # Build node sequence (text nodes + list/table element nodes)
-            node_sequence = []
-            node_texts_tokens = []
-            node_url = []
-            for node_id, node in api.all_nodes.items():
-                if node.is_textnode:
-                    text = node.html_node.text.strip('\r\n\t\xa0 ') 
-                    if len(text) > 0:
-                        node_sequence.append(node_id)
-                        node_texts_tokens.append(tokenizer.tokenize_sequence(text))
-                        node_url.append(api.url)
-
-                elif node.html_node.name in ["ol", "dl", "table"]:
-                    text = node.html_node.text.strip('\r\n\t\xa0 ')
+    def Apply(self, api):
+        node_sequence = []
+        node_texts_tokens = []
+        node_url = []
+        for node_id, node in api.all_nodes.items():
+            if node.is_textnode:
+                text = node.html_node.text.strip('\r\n\t\xa0 ') 
+                if len(text) > 0:
                     node_sequence.append(node_id)
-                    node_texts_tokens.append(tokenizer.tokenize_sequence(text))
+                    node_texts_tokens.append(self.tokenizer.tokenize_sequence(text))
                     node_url.append(api.url)
 
-            node_to_annotation = self._get_annotation_labels(api)
-            labels = self._compute_labels(node_sequence, node_to_annotation)
+            elif node.html_node.name in ["ol", "dl", "table"]:
+                text = node.html_node.text.strip('\r\n\t\xa0 ')
+                node_sequence.append(node_id)
+                node_texts_tokens.append(self.tokenizer.tokenize_sequence(text))
+                node_url.append(api.url)
 
-            chunks = self._chunk_nodes(node_texts_tokens, labels, node_sequence, node_url)
+        node_to_annotation = self._get_annotation_labels(api)
+        labels = self._compute_labels(node_sequence, node_to_annotation)
 
-            for chunk in chunks:
-                json_dict = {'Labels': chunk[1], 'TokenId': chunk[0], 'NodeIds': chunk[2], 'Url': chunk[3]}
-                json_str = json.dumps(json_dict, separators=(',', ':'))
+        chunks = self._chunk_nodes(node_texts_tokens, labels, node_sequence, node_url)
+
+        for chunk in chunks:
+            json_dict = {'Labels': chunk[1], 'TokenId': chunk[0], 'NodeIds': chunk[2], 'Url': chunk[3]}
+            json_str = json.dumps(json_dict, separators=(',', ':'))
                 
-                yield json_str
+            yield json_str
+
+
+def process_file(filename):
+    with zipfile.ZipFile(vdom_path, 'r') as z:
+        with z.open(filename) as f:
+            data = f.read()
+            cw22id = filename[:-4]
+
+            annotate_html = AnnotateHtml()
+            annotate_html.ParseFromString(data)
+            
+            html_string = generator._get_html_from_warc(cw22id, cw22root_path)
+            api = AnnotateHtmlApi(annotate_html, html_string=html_string)
+
+            x = generator.Apply(api)
+
+            rows_gt = []
+            rows_text = []
+            rows_features = []
+
+            for t in x:
+                rows_features.append(t)
+                        
+    return rows_gt, rows_text, rows_features
 
 def split_filename(filename):
     prefix, _ = filename.split('-', 1)
-    return (prefix, filename)
-
-# Function to process a single file
-def process_file(cw22root_path, entry, zip):
-    vdom_path = cw22root_path + f"/vdom/en/en00/{entry}/{zip}"
-    name = re.sub(r'\.zip$', '', zip)
-    output_file = f"data/train/{name}.json"
-    with open(output_file, 'a', encoding='utf-8') as json_file:
-        with zipfile.ZipFile(vdom_path, 'r') as z:
-            for filename in tqdm(z.namelist()):
-                with z.open(filename) as f:
-                    data = f.read()
-                    cw22id = filename[:-4]
-                    html_string = generator._get_html_from_warc(cw22id, cw22root_path)
-                    x = generator.Apply(data, html_string)
-                    for t in x:
-                        json_file.write(f"{t}\n")
+    return prefix, filename
 
 if __name__ == "__main__":
 
     parser = ArgumentParser()
     parser.add_argument('--path', required=True)
     args = parser.parse_args()
-    
+
     if not os.path.exists('data/train/'):
         os.makedirs('data/train/')
 
     generator = FeatureExtractorApplierProcessor()
 
     cw22root_path = args.path
-    root = cw22root_path + "/vdom/en/en00/"
-
     with open('data/train_data_list.json', 'r') as f:
         file_names = json.load(f)
 
-    with Pool() as pool:
-        process_file_partial = partial(process_file, cw22root_path)
-        pool.starmap(process_file_partial, [split_filename(filename) for filename in file_names])
+    for file_name in tqdm(file_names):
+        prefix, file_name = split_filename(file_name)
+        vdom_path =  cw22root_path + "/vdom/en/en00/"+prefix+"/"+file_name
+        
+        with zipfile.ZipFile(vdom_path, 'r') as z:
+            vdom_files = z.namelist()
+
+            with Pool() as pool:
+                results = pool.map(process_file, vdom_files)
+
+            rows_gt_all = [row for result in results for row in result[0]]
+            rows_text_all = [row for result in results for row in result[1]]
+            row_features_all = [row for result in results for row in result[2]]
+
+            name = re.sub(r'\.zip$', '', file_name)
+            output_file = f"data/train/{name}.json"
+
+            with open(output_file, 'a', encoding='utf-8') as json_file:
+                for feature in row_features_all:
+                    json_file.write(f"{feature}\n")

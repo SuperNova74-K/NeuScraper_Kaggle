@@ -13,12 +13,12 @@ from argparse import ArgumentParser
 from tokenization import TokenizerProcessor
 from api import AnnotateHtml, AnnotateHtmlApi
 
-
 class FeatureExtractorApplierProcessor:
     def __init__(self):
         self.comment = 'This is the constant comment for all rows returned'
         self.chunk_size = 384
         self.max_token_length = 50
+        self.tokenizer = TokenizerProcessor(self.max_token_length)
 
 
     def _get_html_from_warc(self, cw22id, cw22root_path):
@@ -103,9 +103,6 @@ class FeatureExtractorApplierProcessor:
 
 
     def Apply(self, api):
-
-        tokenizer = TokenizerProcessor(self.max_token_length)            
-
         node_sequence = []
         node_texts_tokens = []
         node_url = []
@@ -114,13 +111,13 @@ class FeatureExtractorApplierProcessor:
                 text = node.html_node.text.strip('\r\n\t\xa0 ') 
                 if len(text) > 0:
                     node_sequence.append(node_id)
-                    node_texts_tokens.append(tokenizer.tokenize_sequence(text))
+                    node_texts_tokens.append(self.tokenizer.tokenize_sequence(text))
                     node_url.append(api.url)
 
             elif node.html_node.name in ["ol", "dl", "table"]:
                 text = node.html_node.text.strip('\r\n\t\xa0 ')
                 node_sequence.append(node_id)
-                node_texts_tokens.append(tokenizer.tokenize_sequence(text))
+                node_texts_tokens.append(self.tokenizer.tokenize_sequence(text))
                 node_url.append(api.url)
 
         node_to_annotation = self._get_annotation_labels(api)
@@ -152,12 +149,13 @@ def process_file(filename):
             url = api.url
             all_nodes = api.all_nodes
 
+            rows_gt = []
+            rows_text = []
             rows_features = []
+
             for t in x:
                 rows_features.append(t)
 
-            rows_gt = []
-            rows_text = []
             for node in all_nodes.values():
                 if node.nodeid in api.annotation_to_nodeids[1]:
                     tag = True
@@ -193,10 +191,10 @@ if __name__ == "__main__":
     vdom_path = cw22root_path + "/vdom/en/en00/en0001/en0001-01.zip"
 
     with zipfile.ZipFile(vdom_path, 'r') as z:
-        filenames = z.namelist()
+        vdom_files = z.namelist()
     
     with Pool() as pool:
-        results = pool.map(process_file, tqdm(filenames))
+        results = pool.map(process_file, tqdm(vdom_files))
 
     rows_gt_all = [row for result in results for row in result[0]]
     rows_text_all = [row for result in results for row in result[1]]
