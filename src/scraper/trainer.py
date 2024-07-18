@@ -417,10 +417,6 @@ class ContentExtractionTrainer:
             logger.info("Step that has nan loss: " + str(step))
 
         if (self.global_step % args.logging_steps) == 0 and self.global_step != 0:
-            #logger.info("Reach logging step")
-            #logger.info("Loss: " + str(self.tr_loss))
-
-            # tensorboard logs
             logs = {}
 
             loss_scalar = (self.tr_loss - self.logging_loss) / args.logging_steps
@@ -507,7 +503,7 @@ class ContentExtractionTrainer:
             validation_loss = self.val_tr_loss / total_val_steps
             logs["validation_loss"] = validation_loss
             logs["loss_gap"] = self.logging_loss_scalar - validation_loss
-            logger.info("Validation Loss: " + str(self.val_tr_loss))
+            logger.info("Validation Loss: " + str(validation_loss))
 
             for key, value in logs.items():
                 if isinstance(value, dict):
