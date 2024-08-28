@@ -1,7 +1,7 @@
 # NeuScraper
 
 Source code for our ACL'24 paper :  
-***[Cleaner Pretraining Corpus Curation with Neural Web Scraping](https://arxiv.org/abs/2402.14652)***  
+***[Cleaner Pretraining Corpus Curation with Neural Web Scraping](https://aclanthology.org/2024.acl-short.72/)***  
 
 If you find this work useful, please cite our paper  and give us a shining star.
 
